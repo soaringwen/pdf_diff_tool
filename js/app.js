@@ -36,6 +36,10 @@ const els = {
   exportText: $("exportText"), includePrompt: $("includePrompt"),
   copyExport: $("copyExport"), downloadExport: $("downloadExport"),
   exportClose: $("exportClose"),
+  aiBtn: $("aiBtn"), aiModal: $("aiModal"), aiClose: $("aiClose"),
+  aiStatus: $("aiStatus"), aiResult: $("aiResult"),
+  aiStart: $("aiStart"), aiStartText: $("aiStartText"),
+  aiStop: $("aiStop"), aiCopy: $("aiCopy"),
 };
 
 /* ---------- 工具函数 ---------- */
@@ -624,4 +628,162 @@ els.downloadExport.addEventListener("click", () => {
   a.remove();
   URL.revokeObjectURL(a.href);
   toast("报告已下载");
+});
+
+/* ==========================================================
+ * 10. AI 分析（前端 → 后端 → LLM，SSE 流式）
+ * ========================================================== */
+const ai = { running: false, abort: null, configured: false };
+
+function setAiStatus(text, cls) {
+  els.aiStatus.textContent = text;
+  els.aiStatus.className = "modal-tip " + (cls || "");
+}
+
+async function checkBackend() {
+  setAiStatus("正在检查后端服务…");
+  ai.configured = false;
+  els.aiStart.disabled = true;
+  try {
+    const resp = await fetch("/api/config");
+    const cfg = await resp.json();
+    if (cfg.mock) {
+      setAiStatus("⚠ Mock 演示模式：返回预置分析文本（config.json 中将 mock 设为 false 并填入 apiKey 可启用真实 AI）", "warn");
+      ai.configured = true;
+    } else if (cfg.configured) {
+      setAiStatus(`已连接后端 · 分析模型：${cfg.model}`, "ok");
+      ai.configured = true;
+    } else {
+      setAiStatus("后端未配置 API Key：请编辑 config.json 填入 apiKey，保存后重启服务", "err");
+    }
+  } catch {
+    setAiStatus("无法连接后端服务：请通过 python3 server.py 启动后访问", "err");
+  }
+  els.aiStart.disabled = !ai.configured;
+}
+
+/* 打开弹窗（每次打开都重新检查配置） */
+els.aiBtn.addEventListener("click", () => {
+  if (!state.diffData) { toast("请先完成一次对比"); return; }
+  els.aiResult.textContent = "";
+  els.aiModal.classList.remove("hidden");
+  checkBackend();
+});
+function closeAiModal() {
+  if (ai.running) { toast("分析进行中，请先点击「停止」"); return; }
+  els.aiModal.classList.add("hidden");
+}
+els.aiClose.addEventListener("click", closeAiModal);
+els.aiModal.addEventListener("click", (e) => {
+  if (e.target === els.aiModal) closeAiModal();
+});
+
+function appendDelta(text) {
+  els.aiResult.textContent += text;
+  els.aiResult.scrollTop = els.aiResult.scrollHeight;
+}
+
+/* 开始分析：POST 报告 → 读取 SSE 流 */
+els.aiStart.addEventListener("click", async () => {
+  if (!state.diffData || ai.running) return;
+
+  els.aiResult.textContent = "";
+  ai.running = true;
+  ai.abort = new AbortController();
+  els.aiStart.disabled = true;
+  els.aiStartText.textContent = "分析中…";
+  els.aiStop.classList.remove("hidden");
+  els.aiResult.classList.add("streaming");
+
+  const t0 = Date.now();
+  let cursor = null;
+  try {
+    const resp = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report: buildExportText(true), // 复用报告生成器：差异详情 + 分析指令
+        meta: {
+          nameA: state.diffData.nameA, nameB: state.diffData.nameB,
+          stats: state.diffData.stats,
+        },
+      }),
+      signal: ai.abort.signal,
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+
+    // 解析 SSE 流
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "", finished = false;
+    while (!finished) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop();
+      for (const ev of events) {
+        if (!ev.startsWith("data: ")) continue;
+        const payload = JSON.parse(ev.slice(6));
+        if (payload.error) throw new Error(payload.error);
+        if (payload.delta) {
+          if (!cursor) cursor = appendCursor();
+          appendDelta(payload.delta);
+        }
+        if (payload.done) finished = true;
+      }
+    }
+    removeCursor(cursor);
+    setAiStatus(`分析完成 · 耗时 ${((Date.now() - t0) / 1000).toFixed(1)} 秒`, "ok");
+  } catch (err) {
+    removeCursor(cursor);
+    if (err.name === "AbortError") {
+      setAiStatus("已停止分析", "warn");
+    } else {
+      setAiStatus("分析失败：" + err.message, "err");
+    }
+  } finally {
+    ai.running = false;
+    ai.abort = null;
+    els.aiStart.disabled = false;
+    els.aiStartText.textContent = "开始分析";
+    els.aiStop.classList.add("hidden");
+    els.aiResult.classList.remove("streaming");
+  }
+});
+
+function appendCursor() {
+  const c = document.createElement("span");
+  c.className = "cursor";
+  els.aiResult.appendChild(c);
+  return c;
+}
+function removeCursor(cursor) {
+  if (cursor) cursor.remove();
+}
+
+/* 停止 */
+els.aiStop.addEventListener("click", () => {
+  if (ai.abort) ai.abort.abort();
+});
+
+/* 复制结果 */
+els.aiCopy.addEventListener("click", async () => {
+  const txt = els.aiResult.textContent.trim();
+  if (!txt) { toast("暂无可复制的分析结果"); return; }
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast("已复制分析结果");
+  } catch {
+    toast("复制失败，请手动选择文本复制");
+  }
+});
+
+/* Esc 关闭（导出弹窗优先） */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !els.aiModal.classList.contains("hidden")) closeAiModal();
 });
