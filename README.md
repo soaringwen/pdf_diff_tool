@@ -21,14 +21,61 @@
 ### 启动
 
 ```bash
-# 在项目目录下启动任意静态服务器，例如：
-python3 -m http.server 8765
-
-# 然后用浏览器访问
-# http://localhost:8765
+python3 server.py
+# 浏览器访问 http://localhost:8765
 ```
 
-> 也可以直接双击 `index.html` 打开，但推荐使用本地服务器（部分浏览器的安全策略会限制 file:// 协议下的功能）。
+`server.py` 是零依赖的 Python 后端（仅标准库），同时负责：
+- 托管前端页面（无需再单独起静态服务器）
+- `POST /api/analyze`：接收前端差异报告，流式调用 LLM，以 SSE 返回分析结果
+- `GET /api/config`：返回后端配置状态
+
+> 也可以直接双击 `index.html` 查看页面对比功能，但 AI 分析需要通过 `server.py` 启动。
+
+### 配置 AI 分析（可选）
+
+编辑项目根目录的 `config.json`（可从 `config.json.example` 复制修改）：
+
+```json
+{
+  "apiKey": "你的 API Key",
+  "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+  "model": "glm-4.7",
+  "mock": false,
+  "sslVerify": true,
+  "caBundle": ""
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `apiKey` | LLM 服务密钥（智谱 / DeepSeek / OpenAI 等任一兼容服务） |
+| `baseUrl` | OpenAI 兼容接口地址，去掉末尾 `/chat/completions` |
+| `model` | 模型名，如 `glm-4.7`、`deepseek-chat`、`gpt-4o` |
+| `mock` | 设为 `true` 可在不配置 Key 的情况下演示完整链路（返回预置文本） |
+| `sslVerify` | 调用 LLM 接口时是否校验 SSL 证书，默认 `true` |
+| `caBundle` | 自定义 CA 证书文件路径（PEM 格式），优先级高于 `sslVerify` |
+
+所有字段均可用环境变量覆盖：`PDFDIFF_API_KEY` / `PDFDIFF_BASE_URL` / `PDFDIFF_MODEL` / `PDFDIFF_MOCK` / `PDFDIFF_SSL_VERIFY` / `PDFDIFF_CA_BUNDLE`。修改 `config.json` 后需重启 `server.py` 生效。
+
+**API Key 只保存在后端，永远不会暴露给浏览器。**
+
+### 常见问题排查
+
+**AI 分析报错 `SSL: CERTIFICATE_VERIFY_FAILED ... self-signed certificate in certificate chain`**
+
+这是企业网络中常见的 TLS 拦截导致的：出口代理会用自签名证书替换 LLM 服务的证书。两种解决办法：
+
+1. **快速解决**：在 `config.json` 中设置 `"sslVerify": false`，重启服务（仅建议在可信内网环境使用）
+2. **更安全的方式**：向 IT 部门获取公司根证书（PEM 格式），在 `config.json` 中配置 `"caBundle": "/path/to/company-ca.pem"`，重启服务
+
+**AI 分析提示"无法连接后端服务"**
+
+说明页面不是通过 `python3 server.py` 启动的（例如直接双击打开 `index.html`），请改用 `python3 server.py` 启动后访问。
+
+**AI 分析提示"后端尚未配置 LLM API Key"**
+
+编辑 `config.json` 填入 `apiKey` 后重启 `server.py`。
 
 ### 使用步骤
 
@@ -38,6 +85,7 @@ python3 -m http.server 8765
    - 默认为"左右对照"视图，可切换为"合并视图"
    - 点击工具栏的 `▲` / `▼` 按钮或按 `↑` / `↓` 键在各处差异间跳转
 4. **导出报告**：点击工具栏"导出差异报告"，在弹窗中复制全文或下载 `.md` 文件
+5. **AI 分析**：点击工具栏"AI 分析"，后端将差异报告发送给大模型，分析结果流式实时显示，可随时停止、复制结果（需按上文完成 `config.json` 配置）
 
 ### 导出报告发送给大模型
 
@@ -77,6 +125,8 @@ PDF 文件 ──pdf.js──▶ 带页码的文本行 ──jsdiff(Myers/LCS)�
                               ┌─────────────────────────┤
                               ▼                         ▼
                     可视化渲染（双栏/合并）      序列化为 Markdown 报告
+                                                        │
+                    AI 分析结果 ◀──SSE 流式──后端(server.py)──▶ LLM API
 ```
 
 1. **文本提取**：`pdf.js` 逐页调用 `getTextContent()`，根据 `hasEOL` 标志还原换行，拆分为 `{ text, page }` 行数组
@@ -87,12 +137,15 @@ PDF 文件 ──pdf.js──▶ 带页码的文本行 ──jsdiff(Myers/LCS)�
 ## 项目结构
 
 ```
-├── index.html          # 页面入口
-├── css/style.css       # 界面样式
-├── js/app.js           # 提取、diff 与渲染逻辑
-├── gen_test_pdfs.py    # 测试 PDF 生成脚本（可选）
-├── test_old.pdf        # 测试文件：旧版本
-└── test_new.pdf        # 测试文件：新版本
+├── index.html            # 页面入口
+├── css/style.css         # 界面样式
+├── js/app.js             # 提取、diff、渲染与 AI 分析逻辑
+├── server.py             # 零依赖后端：静态服务 + LLM 流式代理
+├── config.json           # 运行时配置（含密钥，勿提交到仓库）
+├── config.json.example   # 配置模板
+├── gen_test_pdfs.py      # 测试 PDF 生成脚本（可选）
+├── test_old.pdf          # 测试文件：旧版本
+└── test_new.pdf          # 测试文件：新版本
 ```
 
 依赖库通过 CDN 加载：

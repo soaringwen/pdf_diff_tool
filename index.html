@@ -97,6 +97,13 @@
         </svg>
         导出差异报告
       </button>
+      <button id="aiBtn" class="export-btn ai-btn" title="调用大模型分析差异内容">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke-linejoin="round"/>
+          <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" stroke-linejoin="round"/>
+        </svg>
+        AI 分析
+      </button>
       <div class="diff-nav">
         <button id="prevDiff" class="nav-btn" title="上一个差异">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 15l-6-6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -135,6 +142,27 @@
   </div>
 
   <div class="toast hidden" id="toast"></div>
+
+  <!-- AI 分析弹窗 -->
+  <div class="modal hidden" id="aiModal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>AI 差异分析</h3>
+        <button id="aiClose" class="modal-close" title="关闭">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-tip" id="aiStatus">正在检查后端服务…</p>
+        <div id="aiResult" class="ai-result"></div>
+        <div class="modal-foot">
+          <button id="aiStop" class="btn-mini hidden">停止</button>
+          <button id="aiStart" class="btn-mini primary">
+            <span id="aiStartText">开始分析</span>
+          </button>
+          <button id="aiCopy" class="btn-mini">复制结果</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- 导出报告弹窗 -->
   <div class="modal hidden" id="exportModal">

@@ -1,0 +1,10 @@
+{
+  "apiKey": "",
+  "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+  "model": "glm-4.7",
+  "temperature": 0.3,
+  "systemPrompt": "你是资深的文档审阅专家，负责分析两个版本文档的差异。请基于用户提供的 PDF 差异报告，用简体中文进行专业、结构化的分析。",
+  "mock": false,
+  "sslVerify": true,
+  "caBundle": ""
+}
